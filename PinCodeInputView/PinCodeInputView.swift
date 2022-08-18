@@ -45,7 +45,6 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
     private var items: [ContainerItemView<T>] = []
     private let itemFactory: () -> UIView
     private var appearance: ItemAppearance?
-	private let autoResizes: Bool
 
     // MARK: - UITextInputTraits
 
@@ -62,13 +61,13 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
     public init(
         digit: Int,
         itemSpacing: CGFloat,
-        itemFactory: @escaping (() -> T),
-		autoresizes: Bool = false) {
+        itemFactory: @escaping (() -> T)
+        ) {
         
         self.digit = digit
         self.itemSpacing = itemSpacing
         self.itemFactory = itemFactory
-        self.autoResizes = autoresizes
+        
         super.init(frame: .zero)
         
         self.items = (0..<digit).map { _ in
@@ -79,19 +78,22 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
             }
             return item
         }
-        self.stackView.frame = self.bounds
+        
         addSubview(stackView)
         
         items.forEach { stackView.addArrangedSubview($0) }
         stackView.spacing = itemSpacing
         stackView.axis = .horizontal
         stackView.distribution = .fillEqually
+            
+        let manuLongpressGusture = UILongPressGestureRecognizer.init(target: self, action: #selector((self.menuLongpressGestureHandler(_:))))
+        self.stackView.addGestureRecognizer(manuLongpressGusture)
     }
     
     required init?(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
-
+    
     // MARK: - Functions
 
     override public func layoutSubviews() {
@@ -123,9 +125,6 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
     
     public func set(appearance: ItemAppearance) {
         self.appearance = appearance
-		if autoResizes {
-			self.appearance = ItemAppearance(itemSize: CGSize(width: (self.bounds.width - (self.itemSpacing * CGFloat(self.digit))) / CGFloat(self.digit), height: appearance.itemSize.height), font: appearance.font, textColor: appearance.textColor, backgroundColor: appearance.backgroundColor, cursorColor: appearance.cursorColor, cornerRadius: appearance.cornerRadius, borderColor: appearance.borderColor)
-		}
         items.forEach { $0.itemView.set(appearance: appearance) }
     }
     
@@ -157,6 +156,25 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
     private func hiddenCursor() {
         
         items.forEach { $0.itemView.isHiddenCursor = true }
+    }
+    
+    @objc func menuLongpressGestureHandler(_ gestureRecognizer: UILongPressGestureRecognizer) {
+        let menu = UIMenuController.shared
+        
+        guard self.isEnabled, !menu.isMenuVisible else {
+            return
+        }
+        
+        guard let pasteboardText = UIPasteboard.general.string, pasteboardText.count == self.digit, Validator.isOnlyNumeric(text: pasteboardText) else {
+            return
+        }
+        
+        if #available(iOS 13.0, *) {
+            menu.showMenu(from: self, rect: self.stackView.frame)
+        } else {
+            menu.setTargetRect(CGRect(x: self.stackView.center.x, y: self.stackView.center.y, width: 0.0, height: 0.0), in: self)
+            menu.setMenuVisible(true, animated: true)
+        }
     }
     
     // MARK: - UIKeyInput
@@ -191,6 +209,15 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
     override public func resignFirstResponder() -> Bool {
         hiddenCursor()
         return super.resignFirstResponder()
+    }
+    
+    public override func paste(_ sender: Any?) {
+        self.text = UIPasteboard.general.string ?? ""
+        self.sendActions(for: .editingChanged)
+    }
+    
+    public override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        return action == #selector(UIResponderStandardEditActions.paste(_:))
     }
  
     // MARK: - private class
