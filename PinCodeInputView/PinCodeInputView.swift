@@ -9,7 +9,23 @@
 import UIKit
 
 @IBDesignable
-public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTraits, UIKeyInput {
+public class PinCodeInputView<T: UIView & ItemType>: UIControl, UIKeyInput {
+    
+    private class FakeResponderView: UIView {
+        var pasteHandler: ((Any?) -> Void)?
+        
+        override var canBecomeFirstResponder: Bool {
+            return true
+        }
+        
+        override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+            return action == #selector(UIResponderStandardEditActions.paste(_:))
+        }
+        
+        override func paste(_ sender: Any?) {
+            self.pasteHandler?(sender)
+        }
+    }
     
     // MARK: - Properties
     
@@ -41,10 +57,14 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
     private let digit: Int
     private let itemSpacing: CGFloat
     private var changeTextHandler: ((String) -> Void)? = nil
+    private var canShowPasteMenuItem: (() -> Bool)? = nil
+    private var pasteTextHandler: (() -> String)? = nil
     private let stackView: UIStackView = .init()
     private var items: [ContainerItemView<T>] = []
     private let itemFactory: () -> UIView
     private var appearance: ItemAppearance?
+    
+    private let fakeResponderView: FakeResponderView = .init()
 
     // MARK: - UITextInputTraits
 
@@ -62,7 +82,7 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
         digit: Int,
         itemSpacing: CGFloat,
         itemFactory: @escaping (() -> T)
-        ) {
+    ) {
         
         self.digit = digit
         self.itemSpacing = itemSpacing
@@ -79,15 +99,20 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
             return item
         }
         
-        addSubview(stackView)
+        addSubview(self.fakeResponderView)
+        addSubview(self.stackView)
         
         items.forEach { stackView.addArrangedSubview($0) }
         stackView.spacing = itemSpacing
         stackView.axis = .horizontal
         stackView.distribution = .fillEqually
-            
+        
+        self.fakeResponderView.pasteHandler = { [weak self] sender in
+            self?.paste(sender)
+        }
+        
         let manuLongpressGusture = UILongPressGestureRecognizer.init(target: self, action: #selector((self.menuLongpressGestureHandler(_:))))
-        self.stackView.addGestureRecognizer(manuLongpressGusture)
+        self.addGestureRecognizer(manuLongpressGusture)
     }
     
     required init?(coder aDecoder: NSCoder) {
@@ -111,6 +136,8 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
             height: appearance.itemSize.height
         )
         stackView.center = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
+        
+        self.fakeResponderView.frame = self.stackView.frame
     }
 
     public func set(text: String) {
@@ -121,6 +148,14 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
 
     public func set(changeTextHandler: @escaping (String) -> ()) {
         self.changeTextHandler = changeTextHandler
+    }
+    
+    public func set(canShowPasteMenuItem: @escaping () -> Bool) {
+        self.canShowPasteMenuItem = canShowPasteMenuItem
+    }
+    
+    public func set(pasteTextHandler: @escaping () -> String) {
+        self.pasteTextHandler = pasteTextHandler
     }
     
     public func set(appearance: ItemAppearance) {
@@ -159,20 +194,36 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
     }
     
     @objc func menuLongpressGestureHandler(_ gestureRecognizer: UILongPressGestureRecognizer) {
+        guard gestureRecognizer.state == .began else {
+            return
+        }
+        
         let menu = UIMenuController.shared
         
         guard self.isEnabled, !menu.isMenuVisible else {
             return
         }
         
-        guard let pasteboardText = UIPasteboard.general.string, pasteboardText.count == self.digit, Validator.isOnlyNumeric(text: pasteboardText) else {
+        guard self.canShowPasteMenuItem?() == true else {
             return
         }
         
-        if #available(iOS 13.0, *) {
-            menu.showMenu(from: self, rect: self.stackView.frame)
+        let menuView: UIView
+        let menuRect: CGRect
+        
+        if self.isFirstResponder {
+            menuView = self
+            menuRect = self.stackView.frame
         } else {
-            menu.setTargetRect(CGRect(x: self.stackView.center.x, y: self.stackView.center.y, width: 0.0, height: 0.0), in: self)
+            menuView = self.fakeResponderView
+            menuRect = self.fakeResponderView.bounds
+            self.fakeResponderView.becomeFirstResponder()
+        }
+        
+        if #available(iOS 13.0, *) {
+            menu.showMenu(from: menuView, rect: menuRect)
+        } else {
+            menu.setTargetRect(CGRect(x: self.stackView.center.x, y: 0, width: 0.0, height: 0.0), in: self)
             menu.setMenuVisible(true, animated: true)
         }
     }
@@ -191,6 +242,11 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
             text.removeLast()
             sendActions(for: .editingChanged)
         }
+    }
+    
+    @available(iOS 12.0, *)
+    public var textContentType: UITextContentType! {
+        .oneTimeCode
     }
 
     // MARK: - UIResponder
@@ -212,7 +268,11 @@ public class PinCodeInputView<T: UIView & ItemType>: UIControl, UITextInputTrait
     }
     
     public override func paste(_ sender: Any?) {
-        self.text = UIPasteboard.general.string ?? ""
+        guard let pasteText = self.pasteTextHandler?(), pasteText.count == self.digit, Validator.isOnlyNumeric(text: pasteText) else {
+            return
+        }
+        
+        self.text = pasteText
         self.sendActions(for: .editingChanged)
     }
     
